@@ -1,9 +1,9 @@
 import sqlite3
-
-DB_PATH = "hms.db"
+from flask import g
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    if "db" not in g:
+        g.db = sqlite3.connect("hms.db")
+        g.db.row_factory = sqlite3.Row
+    return g.db
 

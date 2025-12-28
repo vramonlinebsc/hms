@@ -1,2 +1,16 @@
 chat*.txt
 __pycache__/
+
+# Python bytecode
+*.pyc
+
+# Virtual environments
+venv/
+
+# SQLite databases
+hms.db
+backend/hms.db
+
+# Local secrets / tokens
+tokens.txt
+
