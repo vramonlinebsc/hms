@@ -1,6 +1,6 @@
 chat*.txt
 __pycache__/
-
+.env
 # Python bytecode
 *.pyc
 
