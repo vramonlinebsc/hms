@@ -1,8 +1,8 @@
 import sqlite3
+import os
 from werkzeug.security import generate_password_hash
 
-DB_PATH = "hms.db"
-
+DB_PATH = os.path.join(os.path.dirname(__file__), "hms.db")
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
@@ -30,6 +30,18 @@ def init_db():
         is_blacklisted INTEGER DEFAULT 0,
         FOREIGN KEY(user_id) REFERENCES users(id)
     );
+    
+    -- =========================
+    -- PATIENTS TABLE
+    -- =========================
+    CREATE TABLE IF NOT EXISTS patients (
+        user_id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        age INTEGER,
+        gender TEXT,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+   );
+
 
     -- =========================
     -- DOCTOR AVAILABILITY
@@ -61,6 +73,32 @@ def init_db():
         FOREIGN KEY (doctor_id) REFERENCES doctors(user_id),
         UNIQUE (doctor_id, start_datetime)
     );
+    
+    CREATE TABLE IF NOT EXISTS patient_no_show_penalties (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    appointment_id INTEGER UNIQUE NOT NULL,
+    patient_id INTEGER NOT NULL,
+    email_sent INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (appointment_id) REFERENCES appointments(id),
+    FOREIGN KEY (patient_id) REFERENCES users(id)
+    );
+   
+    -- =========================
+-- AUDIT LOG TABLE
+-- =========================
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_role TEXT NOT NULL,
+    actor_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,
+    metadata TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+
     """)
 
     # =========================

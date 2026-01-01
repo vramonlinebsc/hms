@@ -1,10 +1,30 @@
 from flask import Blueprint, jsonify, request
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash,generate_password_hash
 from backend.db import get_db
 from backend.config import SECRET_KEY, JWT_ALGO, JWT_EXP_SECONDS
 from datetime import datetime, timedelta
 import jwt
 from functools import wraps
+
+def log_audit(action, entity_type, entity_id, metadata=None):
+    db = get_db()
+    db.execute(
+        """
+        INSERT INTO audit_logs
+        (actor_role, actor_id, action, entity_type, entity_id, metadata)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            request.user_role,
+            request.user_id,
+            action,
+            entity_type,
+            entity_id,
+            metadata
+        )
+    )
+    db.commit()
+
 
 health_bp = Blueprint("health", __name__)
 auth_bp = Blueprint("auth", __name__)
@@ -83,6 +103,133 @@ def admin_me():
         role="admin"
     )
 
+@auth_bp.route("/admin/stats/doctors/count", methods=["GET"])
+@require_role("admin")
+def admin_doctor_count():
+    db = get_db()
+    row = db.execute("SELECT COUNT(*) AS count FROM doctors").fetchone()
+    return jsonify(count=row["count"])
+
+@auth_bp.route("/admin/stats/patients/count", methods=["GET"])
+@require_role("admin")
+def admin_patient_count():
+    db = get_db()
+    row = db.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM users
+        WHERE role = 'patient'
+          AND is_active = 1
+        """
+    ).fetchone()
+
+    return jsonify(count=row["count"])
+
+
+@auth_bp.route("/admin/stats/appointments/today", methods=["GET"])
+@require_role("admin")
+def admin_appointments_today_count():
+    db = get_db()
+
+    row = db.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM appointments
+        WHERE date(start_datetime) = date('now')
+        """
+    ).fetchone()
+
+    return jsonify(count=row["count"])
+
+
+@auth_bp.route("/admin/appointments/<int:appointment_id>/cancel", methods=["POST"])
+@require_role("admin")
+def admin_cancel_appointment(appointment_id):
+    db = get_db()
+
+    appt = db.execute(
+        "SELECT status FROM appointments WHERE id = ?",
+        (appointment_id,)
+    ).fetchone()
+
+    if not appt:
+        return jsonify(error="Appointment not found"), 404
+
+    if appt["status"] == "CANCELLED":
+        return jsonify(
+            message="Appointment already cancelled",
+            appointment_id=appointment_id,
+            status="CANCELLED"
+        )
+
+    db.execute(
+        """
+        UPDATE appointments
+        SET status = 'CANCELLED'
+        WHERE id = ?
+        """,
+        (appointment_id,)
+    )
+    db.commit()
+    
+    log_audit(
+        action="CANCEL_APPOINTMENT",
+        entity_type="appointment",
+        entity_id=appointment_id
+    )
+
+
+    return jsonify(
+        message="Appointment cancelled by admin",
+        appointment_id=appointment_id,
+        status="CANCELLED"
+    )
+
+
+@auth_bp.route("/admin/appointments/<int:appointment_id>/mark-no-show", methods=["POST"])
+@require_role("admin")
+def admin_mark_no_show(appointment_id):
+    db = get_db()
+
+    appt = db.execute(
+        "SELECT status FROM appointments WHERE id = ?",
+        (appointment_id,)
+    ).fetchone()
+
+    if not appt:
+        return jsonify(error="Appointment not found"), 404
+
+    if appt["status"] == "NO_SHOW":
+        return jsonify(
+            message="Appointment already marked as NO_SHOW",
+            appointment_id=appointment_id,
+            status="NO_SHOW"
+        )
+
+    db.execute(
+        """
+        UPDATE appointments
+        SET status = 'NO_SHOW'
+        WHERE id = ?
+        """,
+        (appointment_id,)
+    )
+    db.commit()
+    
+    log_audit(
+        action="MARK_NO_SHOW",
+        entity_type="appointment",
+        entity_id=appointment_id
+    )
+
+
+    return jsonify(
+        message="Appointment marked as NO_SHOW by admin",
+        appointment_id=appointment_id,
+        status="NO_SHOW"
+    )
+
+
 @auth_bp.route("/admin/appointments", methods=["GET"])
 @require_role("admin")
 def admin_view_appointments():
@@ -90,39 +237,25 @@ def admin_view_appointments():
 
     query = """
         SELECT
-            id AS appointment_id,
-            patient_id,
-            doctor_id,
-            start_datetime,
-            end_datetime,
-            status,
-            substr(start_datetime, 1, 10) AS appt_date
-        FROM appointments
-        WHERE 1=1
+            a.id AS appointment_id,
+            a.patient_id,
+            p.name AS patient_name,
+            a.doctor_id,
+            d.name AS doctor_name,
+            a.start_datetime,
+            a.end_datetime,
+            a.status,
+            substr(a.start_datetime, 1, 10) AS appt_date
+        FROM appointments a
+        JOIN patients p ON p.user_id = a.patient_id
+        JOIN doctors d ON d.user_id = a.doctor_id
+        ORDER BY a.start_datetime
     """
-    params = []
 
-    status = request.args.get("status")
-    doctor_id = request.args.get("doctor_id")
-    date = request.args.get("date")
-
-    if status:
-        query += " AND status = ?"
-        params.append(status)
-
-    if doctor_id:
-        query += " AND doctor_id = ?"
-        params.append(doctor_id)
-
-    if date:
-        query += " AND substr(start_datetime, 1, 10) = ?"
-        params.append(date)
-
-    query += " ORDER BY start_datetime"
-
-    rows = db.execute(query, params).fetchall()
-
+    rows = db.execute(query).fetchall()
     return jsonify([dict(row) for row in rows])
+
+
 
 @auth_bp.route("/admin/doctors/<int:doctor_id>/blacklist", methods=["POST"])
 @require_role("admin")
@@ -251,6 +384,60 @@ def doctor_login():
         token=token,
         message="Doctor login successful"
     )
+    
+
+@auth_bp.route("/doctor/register", methods=["POST"])
+def doctor_register():
+    data = request.get_json() or {}
+
+    username = data.get("username")
+    password = data.get("password")
+    name = data.get("name")
+    specialization = data.get("specialization")
+
+    if not username or not password or not name:
+        return jsonify(error="Missing required fields"), 400
+
+    db = get_db()
+
+    # prevent duplicate username
+    existing = db.execute(
+        "SELECT id FROM users WHERE username = ?",
+        (username,)
+    ).fetchone()
+
+    if existing:
+        return jsonify(error="Username already exists"), 409
+
+    # create user
+    password_hash = generate_password_hash(password)
+
+    cursor = db.execute(
+        """
+        INSERT INTO users (username, password_hash, role)
+        VALUES (?, ?, 'doctor')
+        """,
+        (username, password_hash)
+    )
+
+    doctor_user_id = cursor.lastrowid
+
+    # create doctor profile
+    db.execute(
+        """
+        INSERT INTO doctors (user_id, name, specialization)
+        VALUES (?, ?, ?)
+        """,
+        (doctor_user_id, name, specialization)
+    )
+
+    db.commit()
+
+    return jsonify(
+        message="Doctor registered successfully",
+        doctor_id=doctor_user_id
+    ), 201
+
 
 @auth_bp.route("/doctor/me", methods=["GET"])
 @require_role("doctor")
@@ -358,6 +545,86 @@ def get_doctor_appointments():
         for row in rows
     ])
 
+@auth_bp.route("/admin/stats/appointments/no-shows", methods=["GET"])
+@require_role("admin")
+def admin_no_shows_count():
+    db = get_db()
+
+    row = db.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM appointments
+        WHERE status = 'NO_SHOW'
+        """
+    ).fetchone()
+
+    return jsonify(count=row["count"])
+
+@auth_bp.route("/admin/stats/appointments/cancelled", methods=["GET"])
+@require_role("admin")
+def admin_cancelled_appointments_count():
+    db = get_db()
+
+    row = db.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM appointments
+        WHERE status = 'CANCELLED'
+        """
+    ).fetchone()
+
+    return jsonify(count=row["count"])
+@auth_bp.route("/patient/register", methods=["POST"])
+def patient_register():
+    data = request.get_json() or {}
+
+    username = data.get("username")
+    password = data.get("password")
+    name = data.get("name")
+    age = data.get("age")
+    gender = data.get("gender")
+
+    if not username or not password or not name:
+        return jsonify(error="Missing required fields"), 400
+
+    db = get_db()
+
+    # prevent duplicate username
+    existing = db.execute(
+        "SELECT id FROM users WHERE username = ?",
+        (username,)
+    ).fetchone()
+
+    if existing:
+        return jsonify(error="Username already exists"), 409
+
+    password_hash = generate_password_hash(password)
+
+    cursor = db.execute(
+        """
+        INSERT INTO users (username, password_hash, role)
+        VALUES (?, ?, 'patient')
+        """,
+        (username, password_hash)
+    )
+
+    patient_user_id = cursor.lastrowid
+
+    db.execute(
+        """
+        INSERT INTO patients (user_id, name, age, gender)
+        VALUES (?, ?, ?, ?)
+        """,
+        (patient_user_id, name, age, gender)
+    )
+
+    db.commit()
+
+    return jsonify(
+        message="Patient registered successfully",
+        patient_id=patient_user_id
+    ), 201
+
 
 @auth_bp.route("/patient/appointments", methods=["POST"])
 @require_role("patient")
@@ -399,6 +666,17 @@ def book_appointment():
         (request.user_id, doctor_id, start_datetime, end_datetime)
     )
     db.commit()
+    
+    patient_email = "venkateshrr.19@gmail.com"
+    
+    from backend.tasks import send_email_task
+    
+    send_email_task.delay(
+    patient_email,
+    "Appointment Booked",
+    "Your appointment has been successfully booked."
+   )
+
 
     return jsonify(
         message="Appointment booked",
@@ -461,37 +739,6 @@ def get_patient_appointments():
         for row in rows
     ])
 
-@auth_bp.route("/patient/register", methods=["POST"])
-def patient_register():
-    data = request.get_json() or {}
-    username = data.get("username")
-    password = data.get("password")
-
-    if not username or not password:
-        return jsonify(error="Username and password required"), 400
-
-    db = get_db()
-
-    existing = db.execute(
-        "SELECT id FROM users WHERE username = ?",
-        (username,)
-    ).fetchone()
-
-    if existing:
-        return jsonify(error="Username already exists"), 409
-
-    from werkzeug.security import generate_password_hash
-
-    db.execute(
-        """
-        INSERT INTO users (username, password_hash, role)
-        VALUES (?, ?, 'patient')
-        """,
-        (username, generate_password_hash(password))
-    )
-    db.commit()
-
-    return jsonify(message="Patient registered successfully"), 201
 
 @auth_bp.route("/patient/login", methods=["POST"])
 def patient_login():

@@ -9,7 +9,15 @@ def make_celery():
         broker="redis://localhost:6380/0",
         backend="redis://localhost:6380/0",
     )
-    
+    from celery.schedules import crontab
+
+    celery.conf.beat_schedule = {
+       "mark-no-shows-every-10-mins": {
+            "task": "mark_no_shows_task",
+            "schedule": crontab(minute="*/10"),
+      }
+   }
+
     celery.autodiscover_tasks(["backend"])
 
 
@@ -28,6 +36,7 @@ def make_celery():
 
     celery.Task = ContextTask
     return celery
+
 
 
 celery = make_celery()
