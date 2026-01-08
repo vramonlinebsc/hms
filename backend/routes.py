@@ -1,3 +1,5 @@
+# ROUTES VERSION: patient auth removed (CI sync)
+
 from flask import Blueprint, jsonify, request
 from werkzeug.security import check_password_hash
 from backend.db import get_db
