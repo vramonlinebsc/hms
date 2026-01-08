@@ -1,34 +1,92 @@
-# backend/routes_patient.py
-
 from flask import Blueprint, jsonify, request
+from werkzeug.security import generate_password_hash, check_password_hash
 from backend.db import get_db
 from backend.routes import require_role
 from datetime import datetime
 
 patient_bp = Blueprint("patient", __name__, url_prefix="/patient")
 
-ALLOWED_STATUSES = {
-    "BOOKED",
-    "COMPLETED",
-    "CANCELLED_BY_ADMIN",
-    "CANCELLED_BY_DOCTOR",
-    "NO_SHOW",
-}
+# =========================
+# REGISTER
+# =========================
+@patient_bp.route("/register", methods=["POST"])
+def register_patient():
+    data = request.get_json(force=True)
+    username = data.get("username")
+    password = data.get("password")
 
-@patient_bp.route("/appointments", methods=["GET"])
-@require_role("patient")
-def list_patient_appointments():
-    patient_id = request.user_id
-
-    date = request.args.get("date")
-    status = request.args.get("status")
-
-    if status and status not in ALLOWED_STATUSES:
-        return jsonify(error="Invalid status filter"), 400
+    if not username or not password:
+        return jsonify(error="Username and password required"), 400
 
     db = get_db()
 
-    query = """
+    try:
+        cur = db.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'patient')",
+            (username, generate_password_hash(password))
+        )
+        user_id = cur.lastrowid
+
+        # 🔑 CRITICAL FIX: insert into patients table
+        db.execute(
+            "INSERT INTO patients (user_id, name) VALUES (?, ?)",
+            (user_id, username)
+        )
+
+        db.commit()
+
+    except Exception:
+        return jsonify(error="Username already exists"), 400
+
+    return jsonify(message="Patient registered successfully"), 201
+
+
+# =========================
+# LOGIN
+# =========================
+@patient_bp.route("/login", methods=["POST"])
+def login_patient():
+    data = request.get_json(force=True)
+    username = data.get("username")
+    password = data.get("password")
+
+    if not username or not password:
+        return jsonify(error="Username and password required"), 400
+
+    db = get_db()
+    row = db.execute(
+        """
+        SELECT id, password_hash
+        FROM users
+        WHERE username = ?
+          AND role = 'patient'
+          AND is_active = 1
+        """,
+        (username,)
+    ).fetchone()
+
+    if not row or not check_password_hash(row["password_hash"], password):
+        return jsonify(error="Invalid credentials"), 401
+
+    from backend.routes import make_token
+    token = make_token(row["id"], "patient")
+
+    return jsonify(
+        patient_id=row["id"],
+        token=token,
+        message="Patient login successful"
+    )
+
+
+# =========================
+# LIST APPOINTMENTS
+# =========================
+@patient_bp.route("/appointments", methods=["GET"])
+@require_role("patient")
+def list_patient_appointments():
+    db = get_db()
+    rows = db.execute(
+        """
         SELECT
             a.id AS appointment_id,
             a.doctor_id,
@@ -39,115 +97,53 @@ def list_patient_appointments():
         FROM appointments a
         JOIN doctors d ON d.user_id = a.doctor_id
         WHERE a.patient_id = ?
-    """
-    params = [patient_id]
+        ORDER BY a.start_datetime
+        """,
+        (request.user_id,)
+    ).fetchall()
 
-    if date:
-        query += " AND date(a.start_datetime) = ?"
-        params.append(date)
-
-    if status:
-        query += " AND a.status = ?"
-        params.append(status)
-
-    query += " ORDER BY a.start_datetime ASC"
-
-    rows = db.execute(query, params).fetchall()
-
-    return jsonify([
-        {
-            "appointment_id": row["appointment_id"],
-            "doctor_id": row["doctor_id"],
-            "doctor_name": row["doctor_name"],
-            "start_datetime": row["start_datetime"],
-            "end_datetime": row["end_datetime"],
-            "status": row["status"],
-        }
-        for row in rows
-    ])
+    return jsonify([dict(row) for row in rows])
 
 
+# =========================
+# BOOK APPOINTMENT
+# =========================
 @patient_bp.route("/appointments", methods=["POST"])
 @require_role("patient")
 def book_appointment():
     data = request.get_json() or {}
-
     doctor_id = data.get("doctor_id")
-    start_dt = data.get("start_datetime")
-    end_dt = data.get("end_datetime")
+    start = data.get("start_datetime")
+    end = data.get("end_datetime")
 
-    if not doctor_id or not start_dt or not end_dt:
+    if not doctor_id or not start or not end:
         return jsonify(error="Missing required fields"), 400
 
-    try:
-        start_dt_parsed = datetime.fromisoformat(start_dt)
-        end_dt_parsed = datetime.fromisoformat(end_dt)
-    except ValueError:
-        return jsonify(error="Invalid datetime format"), 400
-
-    if start_dt_parsed >= end_dt_parsed:
-        return jsonify(error="Invalid time range"), 400
-
-    if start_dt_parsed <= datetime.utcnow():
-        return jsonify(error="Appointment must be in the future"), 409
+    start_dt = datetime.fromisoformat(start)
+    if start_dt <= datetime.utcnow():
+        return jsonify(error="Appointment must be in the future"), 400
 
     db = get_db()
-
-    doctor = db.execute(
-        """
-        SELECT 1
-        FROM doctors d
-        JOIN users u ON u.id = d.user_id
-        WHERE d.user_id = ?
-          AND u.is_active = 1
-        """,
-        (doctor_id,)
-    ).fetchone()
-
-    if not doctor:
-        return jsonify(error="Doctor not available"), 404
-
-    conflict = db.execute(
-        """
-        SELECT 1
-        FROM appointments
-        WHERE doctor_id = ?
-          AND status = 'BOOKED'
-          AND (? < end_datetime AND ? > start_datetime)
-        """,
-        (doctor_id, start_dt, end_dt)
-    ).fetchone()
-
-    if conflict:
-        return jsonify(error="Slot already booked"), 409
 
     try:
         db.execute(
             """
-            INSERT INTO appointments (
-                patient_id,
-                doctor_id,
-                start_datetime,
-                end_datetime,
-                status
-            )
-            VALUES (?, ?, ?, ?, 'BOOKED')
+            INSERT INTO appointments
+            (patient_id, doctor_id, start_datetime, end_datetime)
+            VALUES (?, ?, ?, ?)
             """,
-            (request.user_id, doctor_id, start_dt, end_dt)
+            (request.user_id, doctor_id, start, end)
         )
         db.commit()
     except Exception:
-        return jsonify(error="Duplicate or invalid booking"), 409
+        return jsonify(error="Appointment slot unavailable"), 409
 
-    return jsonify(
-        message="Appointment booked",
-        doctor_id=doctor_id,
-        start_datetime=start_dt,
-        end_datetime=end_dt,
-        status="BOOKED"
-    ), 201
+    return jsonify(message="Appointment booked"), 201
 
 
+# =========================
+# CANCEL APPOINTMENT
+# =========================
 @patient_bp.route("/appointments/<int:appointment_id>/cancel", methods=["PATCH"])
 @require_role("patient")
 def cancel_patient_appointment(appointment_id):
@@ -170,42 +166,21 @@ def cancel_patient_appointment(appointment_id):
         return jsonify(error="Appointment cannot be cancelled"), 409
 
     start_dt = datetime.fromisoformat(appt["start_datetime"])
-
     if datetime.utcnow() >= start_dt:
         return jsonify(error="Too late to cancel appointment"), 409
 
     db.execute(
         """
         UPDATE appointments
-        SET status = 'CANCELLED_BY_ADMIN'
+        SET status = 'CANCELLED_BY_PATIENT'
         WHERE id = ?
         """,
         (appointment_id,)
     )
-
-    db.execute(
-        """
-        INSERT INTO audit_logs (
-            actor_role,
-            actor_id,
-            action,
-            appointment_id
-        )
-        VALUES (?, ?, ?, ?)
-        """,
-        (
-            "patient",
-            request.user_id,
-            "PATIENT_CANCELLED_APPOINTMENT",
-            appointment_id,
-        )
-    )
-
     db.commit()
 
     return jsonify(
-        message="Appointment cancelled",
-        appointment_id=appointment_id,
-        status="CANCELLED_BY_ADMIN"
+    message="Appointment cancelled",
+    status="CANCELLED_BY_PATIENT"
     )
 
