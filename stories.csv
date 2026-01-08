@@ -1,0 +1,44 @@
+Issue Type,Epic Link,Summary,Description,Status
+
+Story,HMS-1,Admin login using JWT,Admin can login and receive JWT token with admin role,Done
+Story,HMS-1,Doctor login using JWT,Doctor can login and receive JWT token with doctor role,Done
+Story,HMS-1,Patient login using JWT,Patient can login and receive JWT token with patient role,Done
+Story,HMS-1,Role-based access enforcement,APIs reject unauthorized role access,Done
+
+Story,HMS-2,Admin dashboard KPIs,Show total doctors patients and appointments,Done
+Story,HMS-2,View all appointments,Admin can view all upcoming and past appointments,Done
+Story,HMS-2,Search doctors,Search doctors by name or specialization,To Do
+Story,HMS-2,Search patients,Search patients by name or ID,To Do
+Story,HMS-2,Blacklist doctor,Admin can blacklist a doctor,Done
+Story,HMS-2,Blacklist patient,Admin can blacklist a patient,To Do
+
+Story,HMS-3,View assigned appointments,Doctor sees assigned appointments,Done
+Story,HMS-3,Complete appointment,Doctor marks appointment completed with diagnosis and treatment,Done
+Story,HMS-3,Cancel appointment,Doctor cancels appointment before start time,In Progress
+Story,HMS-3,Provide availability,Doctor provides availability for next 7 days,In Progress
+Story,HMS-3,View patient history,Doctor can view full patient treatment history,To Do
+
+Story,HMS-4,Patient registration,Patient can register,Done
+Story,HMS-4,Book appointment,Patient books appointment with conflict prevention,Done
+Story,HMS-4,Cancel appointment,Patient cancels appointment before start time,Done
+Story,HMS-4,Reschedule appointment,Patient reschedules an appointment,To Do
+Story,HMS-4,View appointment history,Patient views appointment history with diagnosis and treatment,Done
+Story,HMS-4,Edit patient profile,Patient can edit profile details,To Do
+
+Story,HMS-5,Prevent overlapping bookings,Prevent overlapping appointments for same doctor,Done
+Story,HMS-5,Enforce appointment states,Valid appointment state transitions only,Done
+Story,HMS-5,Persist appointment history,Appointment history is immutable,Done
+
+Story,HMS-6,Daily appointment reminders,Send daily reminders to patients,To Do
+Story,HMS-6,Monthly doctor activity report,Generate monthly HTML or PDF report for doctors,To Do
+Story,HMS-6,CSV export of treatments,Async CSV export of patient treatment history,To Do
+Story,HMS-6,Async job completion notification,Notify user when async job finishes,To Do
+
+Story,HMS-7,Cache admin KPIs,Cache admin dashboard KPIs,To Do
+Story,HMS-7,Cache expiry,Implement cache expiry policies,To Do
+
+Story,HMS-8,ER diagram,Create ER diagram for database,To Do
+Story,HMS-8,API documentation,List all API endpoints,In Progress
+Story,HMS-8,Project report,Write project report within 5 pages,To Do
+Story,HMS-8,AI usage declaration,Declare AI or LLM usage,To Do
+Story,HMS-8,Demo video,Record and upload demo video,To Do

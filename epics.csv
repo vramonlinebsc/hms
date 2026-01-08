@@ -1,0 +1,9 @@
+Issue Type,Summary,Description,Status
+Epic,HMS – Authentication & RBAC,Role-based authentication and JWT enforcement across Admin Doctor Patient,Done
+Epic,HMS – Admin Dashboard,Admin KPIs and governance views,In Progress
+Epic,HMS – Doctor Lifecycle,Doctor appointment and treatment workflow,In Progress
+Epic,HMS – Patient Lifecycle,Patient booking and history workflow,In Progress
+Epic,HMS – Appointment State Management,Deterministic appointment lifecycle,Done
+Epic,HMS – Background Jobs,Async jobs using Redis and Celery,To Do
+Epic,HMS – Performance Optimization,Caching and performance improvements,To Do
+Epic,HMS – Academic Submission,Documentation and submission deliverables,To Do

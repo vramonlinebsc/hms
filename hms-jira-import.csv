@@ -1,0 +1,51 @@
+Issue Type,Epic Name,Summary,Description,Status
+Epic,HMS – Authentication & RBAC,HMS – Authentication & RBAC,Role-based authentication and JWT enforcement across Admin Doctor Patient,Done
+Story,HMS – Authentication & RBAC,Admin login using JWT,Admin can login and receive JWT token with admin role,Done
+Story,HMS – Authentication & RBAC,Doctor login using JWT,Doctor can login and receive JWT token with doctor role,Done
+Story,HMS – Authentication & RBAC,Patient login using JWT,Patient can login and receive JWT token with patient role,Done
+Story,HMS – Authentication & RBAC,Role-based access enforcement,APIs reject unauthorized role access,Done
+
+Epic,HMS – Admin Dashboard,HMS – Admin Dashboard,Admin KPIs and governance views,In Progress
+Story,HMS – Admin Dashboard,Admin dashboard KPIs,Show total doctors patients appointments,Done
+Story,HMS – Admin Dashboard,View all appointments,Admin can view all upcoming and past appointments,Done
+Story,HMS – Admin Dashboard,Search doctors,Search doctors by name or specialization,To Do
+Story,HMS – Admin Dashboard,Search patients,Search patients by name or ID,To Do
+Story,HMS – Admin Dashboard,Blacklist doctor,Admin can blacklist a doctor,Done
+Story,HMS – Admin Dashboard,Blacklist patient,Admin can blacklist a patient,To Do
+
+Epic,HMS – Doctor Lifecycle,HMS – Doctor Lifecycle,Doctor appointment and treatment workflow,In Progress
+Story,HMS – Doctor Lifecycle,View assigned appointments,Doctor sees assigned appointments,Done
+Story,HMS – Doctor Lifecycle,Complete appointment,Doctor marks appointment completed with diagnosis and treatment,Done
+Story,HMS – Doctor Lifecycle,Cancel appointment,Doctor cancels appointment before start time,In Progress
+Story,HMS – Doctor Lifecycle,Provide availability,Doctor provides availability for next 7 days,In Progress
+Story,HMS – Doctor Lifecycle,View patient history,Doctor can view full patient treatment history,To Do
+
+Epic,HMS – Patient Lifecycle,HMS – Patient Lifecycle,Patient booking and history workflow,In Progress
+Story,HMS – Patient Lifecycle,Patient registration,Patient can register,Done
+Story,HMS – Patient Lifecycle,Book appointment,Patient books appointment with conflict prevention,Done
+Story,HMS – Patient Lifecycle,Cancel appointment,Patient cancels appointment before start time,Done
+Story,HMS – Patient Lifecycle,Reschedule appointment,Patient reschedules an appointment,To Do
+Story,HMS – Patient Lifecycle,View appointment history,Patient views appointment history with diagnosis and treatment,Done
+Story,HMS – Patient Lifecycle,Edit patient profile,Patient can edit profile details,To Do
+
+Epic,HMS – Appointment State Management,HMS – Appointment State Management,Deterministic appointment lifecycle,Done
+Story,HMS – Appointment State Management,Prevent overlapping bookings,Prevent overlapping appointments for same doctor,Done
+Story,HMS – Appointment State Management,Enforce appointment states,Valid state transitions only,Done
+Story,HMS – Appointment State Management,Persist appointment history,Appointment history is immutable,Done
+
+Epic,HMS – Background Jobs,HMS – Background Jobs,Async jobs using Redis and Celery,To Do
+Story,HMS – Background Jobs,Daily appointment reminders,Send daily reminders to patients,To Do
+Story,HMS – Background Jobs,Monthly doctor activity report,Generate monthly HTML or PDF report for doctors,To Do
+Story,HMS – Background Jobs,CSV export of treatments,Async CSV export of patient treatment history,To Do
+Story,HMS – Background Jobs,Async job completion notification,Notify user when async job finishes,To Do
+
+Epic,HMS – Performance Optimization,HMS – Performance Optimization,Caching and performance improvements,To Do
+Story,HMS – Performance Optimization,Cache admin KPIs,Cache admin dashboard KPIs,To Do
+Story,HMS – Performance Optimization,Cache expiry,Implement cache expiry policies,To Do
+
+Epic,HMS – Academic Submission,HMS – Academic Submission,Documentation and submission deliverables,To Do
+Story,HMS – Academic Submission,ER diagram,Create ER diagram for database,To Do
+Story,HMS – Academic Submission,API documentation,List all API endpoints,In Progress
+Story,HMS – Academic Submission,Project report,Write project report within 5 pages,To Do
+Story,HMS – Academic Submission,AI usage declaration,Declare AI or LLM usage,To Do
+Story,HMS – Academic Submission,Demo video,Record and upload demo video,To Do

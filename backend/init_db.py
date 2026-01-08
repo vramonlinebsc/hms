@@ -2,9 +2,16 @@ import sqlite3
 import os
 from werkzeug.security import generate_password_hash
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "hms.db")
+
+def get_db_path():
+    return os.getenv(
+        "HMS_DB_PATH",
+        os.path.join(os.path.dirname(__file__), "hms.db")
+    )
+
+
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
 
     cur.executescript("""
@@ -30,7 +37,7 @@ def init_db():
         is_blacklisted INTEGER DEFAULT 0,
         FOREIGN KEY(user_id) REFERENCES users(id)
     );
-    
+
     -- =========================
     -- PATIENTS TABLE
     -- =========================
@@ -40,8 +47,7 @@ def init_db():
         age INTEGER,
         gender TEXT,
         FOREIGN KEY(user_id) REFERENCES users(id)
-   );
-
+    );
 
     -- =========================
     -- DOCTOR AVAILABILITY
@@ -65,7 +71,15 @@ def init_db():
         doctor_id INTEGER NOT NULL,
         start_datetime TEXT NOT NULL,
         end_datetime TEXT NOT NULL,
-        status TEXT CHECK(status IN ('BOOKED','COMPLETED','CANCELLED')) DEFAULT 'BOOKED',
+        status TEXT CHECK(
+            status IN (
+                'BOOKED',
+                'COMPLETED',
+                'CANCELLED_BY_ADMIN',
+                'CANCELLED_BY_PATIENT',
+                'NO_SHOW'
+            )
+        ) DEFAULT 'BOOKED',
         diagnosis TEXT,
         treatment TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -73,32 +87,33 @@ def init_db():
         FOREIGN KEY (doctor_id) REFERENCES doctors(user_id),
         UNIQUE (doctor_id, start_datetime)
     );
-    
-    CREATE TABLE IF NOT EXISTS patient_no_show_penalties (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    appointment_id INTEGER UNIQUE NOT NULL,
-    patient_id INTEGER NOT NULL,
-    email_sent INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (appointment_id) REFERENCES appointments(id),
-    FOREIGN KEY (patient_id) REFERENCES users(id)
-    );
-   
+
     -- =========================
--- AUDIT LOG TABLE
--- =========================
-CREATE TABLE IF NOT EXISTS audit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    actor_role TEXT NOT NULL,
-    actor_id INTEGER NOT NULL,
-    action TEXT NOT NULL,
-    entity_type TEXT NOT NULL,
-    entity_id INTEGER NOT NULL,
-    metadata TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+    -- PATIENT NO-SHOW PENALTIES
+    -- =========================
+    CREATE TABLE IF NOT EXISTS patient_no_show_penalties (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        appointment_id INTEGER UNIQUE NOT NULL,
+        patient_id INTEGER NOT NULL,
+        email_sent INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (appointment_id) REFERENCES appointments(id),
+        FOREIGN KEY (patient_id) REFERENCES users(id)
+    );
 
-
+    -- =========================
+    -- AUDIT LOG TABLE
+    -- =========================
+    CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        actor_role TEXT NOT NULL,
+        actor_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id INTEGER NOT NULL,
+        metadata TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
     """)
 
     # =========================
@@ -106,42 +121,31 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     # =========================
     cur.execute("SELECT id FROM users WHERE username = 'admin'")
     if not cur.fetchone():
-        cur.execute("""
-            INSERT INTO users (username, password_hash, role)
-            VALUES (?, ?, ?)
-        """, (
-            "admin",
-            generate_password_hash("admin123"),
-            "admin"
-        ))
+        cur.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+            ("admin", generate_password_hash("admin123"), "admin")
+        )
 
     # =========================
     # SEED TEST DOCTOR
     # =========================
     cur.execute("SELECT id FROM users WHERE username = 'doctor1'")
     if not cur.fetchone():
-        cur.execute("""
-            INSERT INTO users (username, password_hash, role)
-            VALUES (?, ?, ?)
-        """, (
-            "doctor1",
-            generate_password_hash("doctor123"),
-            "doctor"
-        ))
+        cur.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+            ("doctor1", generate_password_hash("doctor123"), "doctor")
+        )
 
         doctor_user_id = cur.lastrowid
 
-        cur.execute("""
-            INSERT INTO doctors (user_id, name, specialization)
-            VALUES (?, ?, ?)
-        """, (
-            doctor_user_id,
-            "Dr. Test",
-            "General Medicine"
-        ))
+        cur.execute(
+            "INSERT INTO doctors (user_id, name, specialization) VALUES (?, ?, ?)",
+            (doctor_user_id, "Dr. Test", "General Medicine")
+        )
 
     conn.commit()
     conn.close()
+
 
 if __name__ == "__main__":
     init_db()

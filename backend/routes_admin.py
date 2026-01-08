@@ -1,8 +1,14 @@
+# backend/routes_admin.py
+
 from flask import Blueprint, jsonify, request
+from datetime import datetime
 from backend.db import get_db
 from backend.routes import require_role
 
+# -------------------------------------------------------------------
 # Canonical admin blueprint
+# -------------------------------------------------------------------
+
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
 # -------------------------------------------------------------------
@@ -15,8 +21,8 @@ def list_appointments():
     """
     Admin-only, read-only appointment listing.
     Deterministic ordering.
-    Optional filters via query params:
-      - date (YYYY-MM-DD)
+    Optional filters:
+      - date (YYYY-MM-DD, derived from start_datetime)
       - doctor_id
       - status
     """
@@ -31,7 +37,7 @@ def list_appointments():
     status = request.args.get("status")
 
     if appt_date:
-        filters.append("a.appt_date = ?")
+        filters.append("date(a.start_datetime) = ?")
         params.append(appt_date)
 
     if doctor_id:
@@ -50,7 +56,6 @@ def list_appointments():
         f"""
         SELECT
             a.id             AS appointment_id,
-            a.appt_date      AS appt_date,
             a.start_datetime AS start_datetime,
             a.end_datetime   AS end_datetime,
             a.status         AS status,
@@ -68,7 +73,6 @@ def list_appointments():
         {where_clause}
 
         ORDER BY
-            a.appt_date ASC,
             a.start_datetime ASC,
             a.id ASC
         """,
@@ -78,7 +82,6 @@ def list_appointments():
     return jsonify([
         {
             "appointment_id": row["appointment_id"],
-            "appt_date": row["appt_date"],
             "start_datetime": row["start_datetime"],
             "end_datetime": row["end_datetime"],
             "status": row["status"],
@@ -95,16 +98,16 @@ def list_appointments():
 # A2 — ADMIN CANCEL APPOINTMENT
 # -------------------------------------------------------------------
 
-ALLOWED_CANCEL_STATES = {"BOOKED", "CONFIRMED"}
+ALLOWED_CANCEL_STATES = {"BOOKED"}
 
 
 @admin_bp.route("/appointments/<int:appointment_id>/cancel", methods=["PATCH"])
 @require_role("admin")
 def cancel_appointment(appointment_id):
     """
-    Admin-only explicit cancellation.
+    Admin-only cancellation.
+    Enforces lifecycle integrity.
     Idempotent.
-    Enforces valid state transitions.
     """
 
     db = get_db()
@@ -148,13 +151,24 @@ def cancel_appointment(appointment_id):
         (appointment_id,)
     )
 
-    # Append-only audit log
     db.execute(
         """
-        INSERT INTO audit_logs (entity_type, entity_id, action)
-        VALUES ('appointment', ?, 'CANCELLED_BY_ADMIN')
+        INSERT INTO audit_logs (
+            entity_type,
+            entity_id,
+            action,
+            actor_role,
+            actor_id
+        )
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (appointment_id,)
+        (
+            "appointment",
+            appointment_id,
+            "CANCELLED_BY_ADMIN",
+            "admin",
+            request.user_id,
+        )
     )
 
     db.commit()
@@ -168,12 +182,120 @@ def cancel_appointment(appointment_id):
 
 
 # -------------------------------------------------------------------
-# ADMIN READ-ONLY: NO-SHOWS
+# A3 — ADMIN CONFIRM NO-SHOW
+# -------------------------------------------------------------------
+
+ALLOWED_NO_SHOW_STATES = {"BOOKED"}
+
+
+@admin_bp.route(
+    "/appointments/<int:appointment_id>/confirm-no-show",
+    methods=["PATCH"]
+)
+@require_role("admin")
+def confirm_no_show(appointment_id):
+    """
+    Admin-only NO_SHOW confirmation.
+    Enforces time and state invariants.
+    Idempotent.
+    """
+
+    db = get_db()
+
+    row = db.execute(
+        """
+        SELECT id, status, end_datetime
+        FROM appointments
+        WHERE id = ?
+        """,
+        (appointment_id,)
+    ).fetchone()
+
+    if not row:
+        return jsonify(error="Appointment not found"), 404
+
+    current_status = row["status"]
+
+    try:
+        end_dt = datetime.fromisoformat(row["end_datetime"])
+    except Exception:
+        return jsonify(error="Invalid appointment end_datetime format"), 500
+
+    now = datetime.utcnow()
+
+    if now <= end_dt:
+        return jsonify(
+            error="Cannot mark NO_SHOW before appointment end time",
+            now=now.isoformat(),
+            end_datetime=end_dt.isoformat()
+        ), 409
+
+    # Idempotent replay
+    if current_status == "NO_SHOW":
+        return jsonify(
+            appointment_id=appointment_id,
+            status="NO_SHOW",
+            message="Appointment already marked as NO_SHOW"
+        ), 200
+
+    # Illegal transition
+    if current_status not in ALLOWED_NO_SHOW_STATES:
+        return jsonify(
+            error="Illegal state transition",
+            from_status=current_status,
+            to_status="NO_SHOW"
+        ), 409
+
+    db.execute(
+        """
+        UPDATE appointments
+        SET status = 'NO_SHOW'
+        WHERE id = ?
+        """,
+        (appointment_id,)
+    )
+
+    db.execute(
+        """
+        INSERT INTO audit_logs (
+            entity_type,
+            entity_id,
+            action,
+            actor_role,
+            actor_id
+        )
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            "appointment",
+            appointment_id,
+            "NO_SHOW_CONFIRMED",
+            "admin",
+            request.user_id,
+        )
+    )
+
+    db.commit()
+
+    return jsonify(
+        appointment_id=appointment_id,
+        previous_status=current_status,
+        status="NO_SHOW",
+        message="Appointment marked as NO_SHOW by admin"
+    ), 200
+
+
+# -------------------------------------------------------------------
+# A4 — ADMIN READ-ONLY NO-SHOW LIST
 # -------------------------------------------------------------------
 
 @admin_bp.route("/no-shows", methods=["GET"])
 @require_role("admin")
 def get_no_show_appointments():
+    """
+    Admin-only, read-only list of NO_SHOW appointments.
+    """
+
     db = get_db()
 
     rows = db.execute(
@@ -199,195 +321,6 @@ def get_no_show_appointments():
             "start_datetime": row["start_datetime"],
             "end_datetime": row["end_datetime"],
             "status": row["status"]
-        }
-        for row in rows
-    ])
-
-
-# -------------------------------------------------------------------
-# ADMIN READ-ONLY: NO-SHOW PENALTIES
-# -------------------------------------------------------------------
-
-@admin_bp.route("/penalties/no-shows", methods=["GET"])
-@require_role("admin")
-def admin_no_show_penalties():
-    db = get_db()
-
-    rows = db.execute(
-        """
-        SELECT
-            id,
-            patient_id,
-            appointment_id,
-            created_at
-        FROM patient_no_show_penalties
-        ORDER BY created_at DESC
-        """
-    ).fetchall()
-
-    return jsonify([
-        {
-            "penalty_id": row["id"],
-            "patient_id": row["patient_id"],
-            "appointment_id": row["appointment_id"],
-            "created_at": row["created_at"],
-        }
-        for row in rows
-    ])
-from datetime import datetime
-
-ALLOWED_NO_SHOW_STATES = {"BOOKED", "CONFIRMED"}
-
-
-@admin_bp.route(
-    "/appointments/<int:appointment_id>/confirm-no-show",
-    methods=["PATCH"]
-)
-@require_role("admin")
-def confirm_no_show(appointment_id):
-    """
-    Admin-only explicit NO_SHOW confirmation.
-    Enforces time and state invariants.
-    Idempotent.
-    """
-
-    db = get_db()
-
-    row = db.execute(
-        """
-        SELECT id, status, end_datetime
-        FROM appointments
-        WHERE id = ?
-        """,
-        (appointment_id,)
-    ).fetchone()
-
-    if not row:
-        return jsonify(error="Appointment not found"), 404
-
-    current_status = row["status"]
-    end_dt_raw = row["end_datetime"]
-
-    # Parse end time (ISO-like stored string)
-    try:
-        end_dt = datetime.fromisoformat(end_dt_raw)
-    except Exception:
-        return jsonify(
-            error="Invalid appointment end_datetime format"
-        ), 500
-
-    now = datetime.utcnow()
-
-    # Temporal invariant
-    if now <= end_dt:
-        return jsonify(
-            error="Cannot mark NO_SHOW before appointment end time",
-            now=now.isoformat(),
-            end_datetime=end_dt.isoformat()
-        ), 409
-
-    # Idempotent replay
-    if current_status == "NO_SHOW":
-        return jsonify(
-            appointment_id=appointment_id,
-            status="NO_SHOW",
-            message="Appointment already marked as NO_SHOW"
-        ), 200
-
-    # Illegal transition
-    if current_status not in ALLOWED_NO_SHOW_STATES:
-        return jsonify(
-            error="Illegal state transition",
-            from_status=current_status,
-            to_status="NO_SHOW"
-        ), 409
-
-    # Perform transition
-    db.execute(
-        """
-        UPDATE appointments
-        SET status = 'NO_SHOW'
-        WHERE id = ?
-        """,
-        (appointment_id,)
-    )
-
-    # Append-only audit log
-    db.execute(
-        """
-        INSERT INTO audit_logs (entity_type, entity_id, action)
-        VALUES ('appointment', ?, 'NO_SHOW_CONFIRMED')
-        """,
-        (appointment_id,)
-    )
-
-    db.commit()
-
-    return jsonify(
-        appointment_id=appointment_id,
-        previous_status=current_status,
-        status="NO_SHOW",
-        message="Appointment marked as NO_SHOW by admin"
-    ), 200
-@admin_bp.route("/audit-logs", methods=["GET"])
-@require_role("admin")
-def get_audit_logs():
-    """
-    Admin-only, read-only audit log view.
-    Deterministic ordering.
-    Optional filters:
-      - entity_type
-      - entity_id
-      - action
-    """
-
-    db = get_db()
-
-    filters = []
-    params = []
-
-    entity_type = request.args.get("entity_type")
-    entity_id = request.args.get("entity_id")
-    action = request.args.get("action")
-
-    if entity_type:
-        filters.append("entity_type = ?")
-        params.append(entity_type)
-
-    if entity_id:
-        filters.append("entity_id = ?")
-        params.append(entity_id)
-
-    if action:
-        filters.append("action = ?")
-        params.append(action)
-
-    where_clause = ""
-    if filters:
-        where_clause = "WHERE " + " AND ".join(filters)
-
-    rows = db.execute(
-        f"""
-        SELECT
-            id,
-            entity_type,
-            entity_id,
-            action,
-            created_at
-        FROM audit_logs
-        {where_clause}
-        ORDER BY created_at DESC, id DESC
-        """,
-        params
-    ).fetchall()
-
-    return jsonify([
-        {
-            "audit_id": row["id"],
-            "entity_type": row["entity_type"],
-            "entity_id": row["entity_id"],
-            "action": row["action"],
-            "created_at": row["created_at"],
         }
         for row in rows
     ])
