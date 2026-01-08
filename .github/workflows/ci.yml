@@ -22,17 +22,14 @@ jobs:
 
       - name: Install backend dependencies
         run: |
-          cd backend
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Import backend app
+      - name: Run backend tests
+        env:
+          HMS_DB_PATH: /tmp/hms_test.db
         run: |
-          cd backend
-          python - <<EOF
-          import app
-          print("Backend import OK")
-          EOF
+          pytest -q
 
   frontend:
     name: Frontend build check
@@ -45,15 +42,13 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "18"
 
       - name: Install frontend dependencies
-        run: |
-          cd hms-web
-          npm install
+        working-directory: frontend
+        run: npm install
 
       - name: Build frontend
-        run: |
-          cd hms-web
-          npm run build
+        working-directory: frontend
+        run: npm run build
 
