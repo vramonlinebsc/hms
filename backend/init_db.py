@@ -14,11 +14,22 @@ def init_db():
     conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
 
+    # ---- HARD RESET (SAFE FOR HMS PROJECT) ----
+    cur.executescript("""
+    DROP TABLE IF EXISTS audit_logs;
+    DROP TABLE IF EXISTS patient_no_show_penalties;
+    DROP TABLE IF EXISTS appointments;
+    DROP TABLE IF EXISTS doctor_slots;
+    DROP TABLE IF EXISTS patients;
+    DROP TABLE IF EXISTS doctors;
+    DROP TABLE IF EXISTS users;
+    """)
+
     cur.executescript("""
     -- =========================
-    -- USERS TABLE
+    -- USERS
     -- =========================
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
@@ -28,9 +39,9 @@ def init_db():
     );
 
     -- =========================
-    -- DOCTORS TABLE
+    -- DOCTORS
     -- =========================
-    CREATE TABLE IF NOT EXISTS doctors (
+    CREATE TABLE doctors (
         user_id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         specialization TEXT NOT NULL,
@@ -39,9 +50,9 @@ def init_db():
     );
 
     -- =========================
-    -- PATIENTS TABLE
+    -- PATIENTS
     -- =========================
-    CREATE TABLE IF NOT EXISTS patients (
+    CREATE TABLE patients (
         user_id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         age INTEGER,
@@ -50,28 +61,27 @@ def init_db():
     );
 
     -- =========================
-    -- DOCTOR AVAILABILITY
+    -- DOCTOR SLOTS
     -- =========================
-    CREATE TABLE IF NOT EXISTS doctor_availability (
+    CREATE TABLE doctor_slots (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         doctor_id INTEGER NOT NULL,
         start_datetime TEXT NOT NULL,
         end_datetime TEXT NOT NULL,
-        is_available INTEGER DEFAULT 1,
+        is_booked INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (doctor_id) REFERENCES doctors(user_id)
+        FOREIGN KEY (doctor_id) REFERENCES doctors(user_id),
+        UNIQUE (doctor_id, start_datetime)
     );
 
     -- =========================
     -- APPOINTMENTS
     -- =========================
-    CREATE TABLE IF NOT EXISTS appointments (
+    CREATE TABLE appointments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slot_id INTEGER NOT NULL UNIQUE,
         patient_id INTEGER NOT NULL,
-        doctor_id INTEGER NOT NULL,
-        start_datetime TEXT NOT NULL,
-        end_datetime TEXT NOT NULL,
-        status TEXT CHECK(
+        status TEXT CHECK (
             status IN (
                 'BOOKED',
                 'COMPLETED',
@@ -83,15 +93,17 @@ def init_db():
         diagnosis TEXT,
         treatment TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (patient_id) REFERENCES users(id),
-        FOREIGN KEY (doctor_id) REFERENCES doctors(user_id),
-        UNIQUE (doctor_id, start_datetime)
+        FOREIGN KEY (slot_id) REFERENCES doctor_slots(id),
+        FOREIGN KEY (patient_id) REFERENCES users(id)
     );
 
+    CREATE UNIQUE INDEX uq_patient_slot
+    ON appointments (patient_id, slot_id);
+
     -- =========================
-    -- PATIENT NO-SHOW PENALTIES
+    -- NO-SHOW PENALTIES
     -- =========================
-    CREATE TABLE IF NOT EXISTS patient_no_show_penalties (
+    CREATE TABLE patient_no_show_penalties (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         appointment_id INTEGER UNIQUE NOT NULL,
         patient_id INTEGER NOT NULL,
@@ -102,9 +114,9 @@ def init_db():
     );
 
     -- =========================
-    -- AUDIT LOG TABLE
+    -- AUDIT LOG
     -- =========================
-    CREATE TABLE IF NOT EXISTS audit_logs (
+    CREATE TABLE audit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         actor_role TEXT NOT NULL,
         actor_id INTEGER NOT NULL,
@@ -116,32 +128,23 @@ def init_db():
     );
     """)
 
-    # =========================
-    # SEED ADMIN USER
-    # =========================
-    cur.execute("SELECT id FROM users WHERE username = 'admin'")
-    if not cur.fetchone():
-        cur.execute(
-            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-            ("admin", generate_password_hash("admin123"), "admin")
-        )
+    # ---- SEED ADMIN ----
+    cur.execute(
+        "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+        ("admin", generate_password_hash("admin123"), "admin")
+    )
 
-    # =========================
-    # SEED TEST DOCTOR
-    # =========================
-    cur.execute("SELECT id FROM users WHERE username = 'doctor1'")
-    if not cur.fetchone():
-        cur.execute(
-            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-            ("doctor1", generate_password_hash("doctor123"), "doctor")
-        )
+    # ---- SEED DOCTOR ----
+    cur.execute(
+        "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+        ("doctor1", generate_password_hash("doctor123"), "doctor")
+    )
+    doctor_user_id = cur.lastrowid
 
-        doctor_user_id = cur.lastrowid
-
-        cur.execute(
-            "INSERT INTO doctors (user_id, name, specialization) VALUES (?, ?, ?)",
-            (doctor_user_id, "Dr. Test", "General Medicine")
-        )
+    cur.execute(
+        "INSERT INTO doctors (user_id, name, specialization) VALUES (?, ?, ?)",
+        (doctor_user_id, "Dr. Test", "General Medicine")
+    )
 
     conn.commit()
     conn.close()

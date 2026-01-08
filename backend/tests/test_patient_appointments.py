@@ -26,25 +26,37 @@ def test_patient_can_book_and_cancel(client):
     )
     token = login.get_json()["token"]
 
-    doctor_id = get_doctor_id(client)
+    # doctor login (to create slot)
+    doc_login = client.post(
+        "/doctor/login",
+        json={"username": "doctor1", "password": "doctor123"}
+    )
+    doc_token = doc_login.get_json()["token"]
 
-    # IMPORTANT:
-    # Push appointment far enough into the future
-    # to avoid overlap with any other test data
     start = (datetime.utcnow() + timedelta(days=1, hours=1)).isoformat()
     end = (datetime.utcnow() + timedelta(days=1, hours=2)).isoformat()
 
-    # book
-    res = client.post(
-        "/patient/appointments",
+    # create slot
+    slot_res = client.post(
+        "/doctor/slots",
         json={
-            "doctor_id": doctor_id,
             "start_datetime": start,
             "end_datetime": end
-        },
+      },
+      headers=auth_header(doc_token)
+    )
+    assert slot_res.status_code == 201
+
+    slot_id = slot_res.get_json()["slot_id"]
+
+    # book slot
+    res = client.post(
+        "/patient/appointments",
+        json={"slot_id": slot_id},
         headers=auth_header(token)
     )
     assert res.status_code == 201
+
 
     # list
     res = client.get(

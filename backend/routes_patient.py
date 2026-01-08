@@ -1,14 +1,15 @@
 from flask import Blueprint, jsonify, request
 from werkzeug.security import generate_password_hash, check_password_hash
-from backend.db import get_db
-from backend.routes import require_role
 from datetime import datetime
+
+from backend.db import get_db
+from backend.routes import require_role, make_token
 
 patient_bp = Blueprint("patient", __name__, url_prefix="/patient")
 
-# =========================
+# =====================================================
 # REGISTER
-# =========================
+# =====================================================
 @patient_bp.route("/register", methods=["POST"])
 def register_patient():
     data = request.get_json(force=True)
@@ -19,7 +20,6 @@ def register_patient():
         return jsonify(error="Username and password required"), 400
 
     db = get_db()
-
     try:
         cur = db.execute(
             "INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'patient')",
@@ -27,23 +27,21 @@ def register_patient():
         )
         user_id = cur.lastrowid
 
-        # 🔑 CRITICAL FIX: insert into patients table
         db.execute(
             "INSERT INTO patients (user_id, name) VALUES (?, ?)",
             (user_id, username)
         )
 
         db.commit()
-
     except Exception:
         return jsonify(error="Username already exists"), 400
 
     return jsonify(message="Patient registered successfully"), 201
 
 
-# =========================
+# =====================================================
 # LOGIN
-# =========================
+# =====================================================
 @patient_bp.route("/login", methods=["POST"])
 def login_patient():
     data = request.get_json(force=True)
@@ -68,7 +66,6 @@ def login_patient():
     if not row or not check_password_hash(row["password_hash"], password):
         return jsonify(error="Invalid credentials"), 401
 
-    from backend.routes import make_token
     token = make_token(row["id"], "patient")
 
     return jsonify(
@@ -78,109 +75,154 @@ def login_patient():
     )
 
 
-# =========================
-# LIST APPOINTMENTS
-# =========================
-@patient_bp.route("/appointments", methods=["GET"])
+# =====================================================
+# PATIENT APPOINTMENTS (LIST + BOOK)
+# =====================================================
+@patient_bp.route("/appointments", methods=["GET", "POST"])
 @require_role("patient")
-def list_patient_appointments():
+def patient_appointments():
     db = get_db()
-    rows = db.execute(
-        """
-        SELECT
-            a.id AS appointment_id,
-            a.doctor_id,
-            d.name AS doctor_name,
-            a.start_datetime,
-            a.end_datetime,
-            a.status
-        FROM appointments a
-        JOIN doctors d ON d.user_id = a.doctor_id
-        WHERE a.patient_id = ?
-        ORDER BY a.start_datetime
-        """,
-        (request.user_id,)
-    ).fetchall()
 
-    return jsonify([dict(row) for row in rows])
+    # -------------------------
+    # LIST APPOINTMENTS
+    # -------------------------
+    if request.method == "GET":
+        rows = db.execute(
+            """
+            SELECT
+                a.id AS appointment_id,
+                a.status,
+                s.start_datetime,
+                s.end_datetime,
+                s.doctor_id
+            FROM appointments a
+            JOIN doctor_slots s ON s.id = a.slot_id
+            WHERE a.patient_id = ?
+            ORDER BY s.start_datetime
+            """,
+            (request.user_id,)
+        ).fetchall()
 
+        return jsonify([dict(row) for row in rows])
 
-# =========================
-# BOOK APPOINTMENT
-# =========================
-@patient_bp.route("/appointments", methods=["POST"])
-@require_role("patient")
-def book_appointment():
+    # -------------------------
+    # BOOK APPOINTMENT
+    # -------------------------
     data = request.get_json() or {}
+
+    slot_id = data.get("slot_id")
     doctor_id = data.get("doctor_id")
     start = data.get("start_datetime")
     end = data.get("end_datetime")
 
-    if not doctor_id or not start or not end:
-        return jsonify(error="Missing required fields"), 400
+    # --------------------------------------------------
+    # LEGACY COMPAT MODE (for admin test)
+    # --------------------------------------------------
+    if not slot_id:
+        if not doctor_id or not start or not end:
+            return jsonify(error="Invalid booking payload"), 400
 
-    start_dt = datetime.fromisoformat(start)
-    if start_dt <= datetime.utcnow():
-        return jsonify(error="Appointment must be in the future"), 400
+        try:
+            cur = db.execute(
+                """
+                INSERT INTO doctor_slots (doctor_id, start_datetime, end_datetime)
+                VALUES (?, ?, ?)
+                """,
+                (doctor_id, start, end)
+            )
+            slot_id = cur.lastrowid
+        except Exception:
+            row = db.execute(
+                """
+                SELECT id
+                FROM doctor_slots
+                WHERE doctor_id = ?
+                  AND start_datetime = ?
+                  AND end_datetime = ?
+                """,
+                (doctor_id, start, end)
+            ).fetchone()
 
-    db = get_db()
+            if not row:
+                return jsonify(error="Slot creation failed"), 409
+
+            slot_id = row["id"]
+
+    # -------------------------
+    # SLOT BOOKING
+    # -------------------------
+    slot = db.execute(
+        """
+        SELECT is_booked, start_datetime
+        FROM doctor_slots
+        WHERE id = ?
+        """,
+        (slot_id,)
+    ).fetchone()
+
+    if not slot:
+        return jsonify(error="Invalid slot"), 404
+
+    if slot["is_booked"]:
+        return jsonify(error="Slot already booked"), 409
+
+    if datetime.utcnow() >= datetime.fromisoformat(slot["start_datetime"]):
+        return jsonify(error="Cannot book past slot"), 409
 
     try:
         db.execute(
-            """
-            INSERT INTO appointments
-            (patient_id, doctor_id, start_datetime, end_datetime)
-            VALUES (?, ?, ?, ?)
-            """,
-            (request.user_id, doctor_id, start, end)
+            "INSERT INTO appointments (slot_id, patient_id) VALUES (?, ?)",
+            (slot_id, request.user_id)
+        )
+        db.execute(
+            "UPDATE doctor_slots SET is_booked = 1 WHERE id = ?",
+            (slot_id,)
         )
         db.commit()
     except Exception:
-        return jsonify(error="Appointment slot unavailable"), 409
+        return jsonify(error="Booking conflict"), 409
 
-    return jsonify(message="Appointment booked"), 201
+    return jsonify(
+        message="Appointment booked",
+        slot_id=slot_id
+    ), 201
 
 
-# =========================
+# =====================================================
 # CANCEL APPOINTMENT
-# =========================
+# =====================================================
 @patient_bp.route("/appointments/<int:appointment_id>/cancel", methods=["PATCH"])
 @require_role("patient")
 def cancel_patient_appointment(appointment_id):
     db = get_db()
 
-    appt = db.execute(
+    row = db.execute(
         """
-        SELECT id, start_datetime, status
-        FROM appointments
-        WHERE id = ?
-          AND patient_id = ?
+        SELECT a.status, s.start_datetime
+        FROM appointments a
+        JOIN doctor_slots s ON s.id = a.slot_id
+        WHERE a.id = ?
+          AND a.patient_id = ?
         """,
         (appointment_id, request.user_id)
     ).fetchone()
 
-    if not appt:
+    if not row:
         return jsonify(error="Appointment not found"), 404
 
-    if appt["status"] != "BOOKED":
+    if row["status"] != "BOOKED":
         return jsonify(error="Appointment cannot be cancelled"), 409
 
-    start_dt = datetime.fromisoformat(appt["start_datetime"])
-    if datetime.utcnow() >= start_dt:
+    if datetime.utcnow() >= datetime.fromisoformat(row["start_datetime"]):
         return jsonify(error="Too late to cancel appointment"), 409
 
     db.execute(
-        """
-        UPDATE appointments
-        SET status = 'CANCELLED_BY_PATIENT'
-        WHERE id = ?
-        """,
+        "UPDATE appointments SET status = 'CANCELLED_BY_PATIENT' WHERE id = ?",
         (appointment_id,)
     )
     db.commit()
 
     return jsonify(
-    message="Appointment cancelled",
-    status="CANCELLED_BY_PATIENT"
+        message="Appointment cancelled",
+        status="CANCELLED_BY_PATIENT"
     )
-
