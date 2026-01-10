@@ -80,6 +80,22 @@ def init_db():
             (doctor_user_id, "Dr. Test", "General Medicine")
         )
 
+    
+    cur.executescript("""
+    CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+    CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);
+
+    CREATE INDEX IF NOT EXISTS idx_doctors_blacklisted ON doctors(is_blacklisted);
+
+     -- Appointments: only index columns that actually exist
+    CREATE INDEX IF NOT EXISTS idx_appt_created_at ON appointments(created_at);
+    CREATE INDEX IF NOT EXISTS idx_appt_slot ON appointments(slot_id);
+    CREATE INDEX IF NOT EXISTS idx_appt_patient ON appointments(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_appt_status ON appointments(status);
+
+    """)
+
+
     conn.commit()
     conn.close()
 

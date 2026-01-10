@@ -1,20 +1,28 @@
 import sqlite3
-import os
 from flask import g
 
-def get_db_path():
-    return os.getenv("HMS_DB_PATH", "hms.db")
+DB_PATH = "hms.db"
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(get_db_path())
-        g.db.row_factory = sqlite3.Row
+        conn = sqlite3.connect(
+            DB_PATH,
+            check_same_thread=False
+        )
+        conn.row_factory = sqlite3.Row
+
+        # --- HARDENING PRAGMAS ---
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA foreign_keys=ON;")
+        conn.execute("PRAGMA temp_store=MEMORY;")
+
+        g.db = conn
+
     return g.db
 
 def init_app(app):
-    @app.teardown_appcontext
-    def close_db(exception):
-        db = g.pop("db", None)
-        if db is not None:
-            db.close()
+    # DB is initialized lazily via get_db()
+    # This hook exists only to satisfy app wiring
+    pass
 

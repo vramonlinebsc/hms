@@ -89,3 +89,103 @@ def cancel_appointment(appointment_id):
         message="Appointment cancelled",
         status="CANCELLED_BY_ADMIN"
     ), 200
+
+
+
+@admin_bp.route("/stats", methods=["GET"])
+@require_role("admin")
+def admin_stats():
+    db = get_db()
+
+    total_doctors = db.execute(
+        "SELECT COUNT(*) FROM doctors"
+    ).fetchone()[0]
+
+    active_doctors = db.execute(
+        "SELECT COUNT(*) FROM doctors WHERE is_blacklisted = 0"
+    ).fetchone()[0]
+
+    total_patients = db.execute(
+        "SELECT COUNT(*) FROM users WHERE role = 'patient'"
+    ).fetchone()[0]
+
+    total_appointments = db.execute(
+        "SELECT COUNT(*) FROM appointments"
+    ).fetchone()[0]
+
+    active_appointments = db.execute(
+        "SELECT COUNT(*) FROM appointments WHERE status = 'BOOKED'"
+    ).fetchone()[0]
+
+    cancelled_appointments = db.execute(
+        "SELECT COUNT(*) FROM appointments WHERE status LIKE 'CANCEL%'"
+    ).fetchone()[0]
+
+    return jsonify({
+        "total_doctors": total_doctors,
+        "active_doctors": active_doctors,
+        "total_patients": total_patients,
+        "total_appointments": total_appointments,
+        "active_appointments": active_appointments,
+        "cancelled_appointments": cancelled_appointments
+    }), 200
+
+
+@admin_bp.route("/patients", methods=["GET"])
+@require_role("admin")
+def list_patients():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT
+            id,
+            username,
+            is_active,
+            created_at
+        FROM users
+        WHERE role = 'patient'
+        ORDER BY created_at DESC
+        """
+    ).fetchall()
+
+    return jsonify([
+        {
+            "id": row["id"],
+            "username": row["username"],
+            "is_active": bool(row["is_active"]),
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ])
+
+
+@admin_bp.route("/patients/<int:patient_id>/deactivate", methods=["PATCH"])
+@require_role("admin")
+def deactivate_patient(patient_id):
+    db = get_db()
+    cur = db.execute(
+        "UPDATE users SET is_active = 0 WHERE id = ? AND role = 'patient'",
+        (patient_id,),
+    )
+
+    if cur.rowcount == 0:
+        return jsonify(error="Patient not found"), 404
+
+    db.commit()
+    return jsonify(message="Patient deactivated")
+
+
+@admin_bp.route("/patients/<int:patient_id>/activate", methods=["PATCH"])
+@require_role("admin")
+def activate_patient(patient_id):
+    db = get_db()
+    cur = db.execute(
+        "UPDATE users SET is_active = 1 WHERE id = ? AND role = 'patient'",
+        (patient_id,),
+    )
+
+    if cur.rowcount == 0:
+        return jsonify(error="Patient not found"), 404
+
+    db.commit()
+    return jsonify(message="Patient activated")

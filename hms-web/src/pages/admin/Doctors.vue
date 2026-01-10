@@ -1,6 +1,6 @@
 <template>
   <v-container fluid>
-    <!-- Back Navigation -->
+    <!-- Top Bar -->
     <v-row class="mb-4">
       <v-col cols="12" class="d-flex align-center justify-space-between">
         <v-btn
@@ -12,11 +12,11 @@
         </v-btn>
 
         <v-btn
+          size="small"
           variant="outlined"
           color="primary"
-          size="small"
           :loading="loading"
-          @click="fetchAppointments"
+          @click="fetchDoctors"
         >
           Refresh
         </v-btn>
@@ -26,9 +26,9 @@
     <!-- Header -->
     <v-row>
       <v-col cols="12">
-        <h1 class="page-title">Appointments</h1>
+        <h1 class="page-title">Doctors</h1>
         <p class="page-subtitle">
-          Administrative view of all appointments in the system
+          Administrative control of registered doctors
         </p>
       </v-col>
     </v-row>
@@ -50,11 +50,8 @@
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Date</th>
-                <th>Doctor</th>
-                <th>Patient</th>
-                <th>Start</th>
-                <th>End</th>
+                <th>Name</th>
+                <th>Specialization</th>
                 <th>Status</th>
                 <th class="text-center">Actions</th>
               </tr>
@@ -63,48 +60,41 @@
             <tbody>
               <!-- Loading -->
               <tr v-if="loading">
-                <td colspan="8" class="text-center py-8 text-medium-emphasis">
-                  Loading appointments…
+                <td colspan="5" class="text-center py-8 text-medium-emphasis">
+                  Loading doctors…
                 </td>
               </tr>
 
               <!-- Empty -->
-              <tr v-else-if="appointments.length === 0">
-                <td colspan="8" class="text-center py-8 text-medium-emphasis">
-                  No appointments found
+              <tr v-else-if="doctors.length === 0">
+                <td colspan="5" class="text-center py-8 text-medium-emphasis">
+                  No doctors found
                 </td>
               </tr>
 
-              <!-- Data -->
-              <tr
-                v-for="appt in appointments"
-                :key="appt.appointment_id"
-              >
-                <td>{{ appt.appointment_id }}</td>
-                <td>{{ appt.appt_date }}</td>
-                <td>{{ appt.doctor_id }}</td>
-                <td>{{ appt.patient_id }}</td>
-                <td>{{ formatDateTime(appt.start_datetime) }}</td>
-                <td>{{ formatDateTime(appt.end_datetime) }}</td>
+              <!-- Rows -->
+              <tr v-for="doc in doctors" :key="doc.user_id">
+                <td>{{ doc.user_id }}</td>
+                <td>{{ doc.name || "—" }}</td>
+                <td>{{ doc.specialization || "—" }}</td>
                 <td>
                   <v-chip
                     size="small"
                     variant="flat"
-                    :color="statusColor(appt.status)"
+                    :color="doc.is_blacklisted ? 'error' : 'success'"
                   >
-                    {{ appt.status }}
+                    {{ doc.is_blacklisted ? "BLACKLISTED" : "ACTIVE" }}
                   </v-chip>
                 </td>
                 <td class="text-center">
                   <v-btn
                     size="small"
-                    color="error"
                     variant="outlined"
-                    :disabled="appt.status !== 'BOOKED' || cancellingId === appt.appointment_id"
-                    :loading="cancellingId === appt.appointment_id"
-                    @click="cancelAppointment(appt)"
+                    :color="doc.is_blacklisted ? 'success' : 'error'"
+                    :loading="togglingId === doc.user_id"
+                    @click="toggleBlacklist(doc)"
                   >
-                    Cancel
+                    {{ doc.is_blacklisted ? "Unblacklist" : "Blacklist" }}
                   </v-btn>
                 </td>
               </tr>
@@ -126,24 +116,21 @@ const router = useRouter()
    Types
 ----------------------------- */
 
-interface Appointment {
-  appointment_id: number
-  patient_id: number
-  doctor_id: number
-  start_datetime: string
-  end_datetime: string
-  appt_date: string
-  status: string
+interface Doctor {
+  user_id: number
+  name: string | null
+  specialization: string | null
+  is_blacklisted: number
 }
 
 /* -----------------------------
    State
 ----------------------------- */
 
-const appointments = ref<Appointment[]>([])
+const doctors = ref<Doctor[]>([])
 const loading = ref(false)
 const error = ref("")
-const cancellingId = ref<number | null>(null)
+const togglingId = ref<number | null>(null)
 
 /* -----------------------------
    Navigation
@@ -161,34 +148,11 @@ function getToken(): string | null {
   return localStorage.getItem("hms_token")
 }
 
-function formatDateTime(value: string) {
-  try {
-    return new Date(value).toLocaleString()
-  } catch {
-    return value
-  }
-}
-
-function statusColor(status: string) {
-  switch (status) {
-    case "BOOKED":
-      return "primary"
-    case "COMPLETED":
-      return "success"
-    case "CANCELLED":
-      return "error"
-    case "NO_SHOW":
-      return "warning"
-    default:
-      return "default"
-  }
-}
-
 /* -----------------------------
    API
 ----------------------------- */
 
-async function fetchAppointments() {
+async function fetchDoctors() {
   loading.value = true
   error.value = ""
 
@@ -200,7 +164,7 @@ async function fetchAppointments() {
     }
 
     const res = await fetch(
-      "http://127.0.0.1:5000/admin/appointments",
+      "http://127.0.0.1:5000/admin/doctors",
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -214,24 +178,30 @@ async function fetchAppointments() {
     }
 
     if (!res.ok) {
-      throw new Error("Failed to fetch appointments")
+      throw new Error("Fetch failed")
     }
 
-    appointments.value = await res.json()
+    doctors.value = await res.json()
   } catch (e) {
     console.error(e)
-    error.value = "Unable to load appointments. Please try again."
+    error.value = "Unable to load doctors."
   } finally {
     loading.value = false
   }
 }
 
-async function cancelAppointment(appt: Appointment) {
-  if (!confirm(`Cancel appointment #${appt.appointment_id}?`)) {
+async function toggleBlacklist(doc: Doctor) {
+  const action = doc.is_blacklisted ? "unblacklist" : "blacklist"
+
+  if (
+    !confirm(
+      `${action === "blacklist" ? "Blacklist" : "Unblacklist"} doctor #${doc.user_id}?`
+    )
+  ) {
     return
   }
 
-  cancellingId.value = appt.appointment_id
+  togglingId.value = doc.user_id
 
   try {
     const token = getToken()
@@ -241,7 +211,7 @@ async function cancelAppointment(appt: Appointment) {
     }
 
     const res = await fetch(
-      `http://127.0.0.1:5000/admin/appointments/${appt.appointment_id}/cancel`,
+      `http://127.0.0.1:5000/admin/doctors/${doc.user_id}/${action}`,
       {
         method: "POST",
         headers: {
@@ -251,15 +221,15 @@ async function cancelAppointment(appt: Appointment) {
     )
 
     if (!res.ok) {
-      throw new Error("Cancel failed")
+      throw new Error("Toggle failed")
     }
 
-    await fetchAppointments()
+    await fetchDoctors()
   } catch (e) {
     console.error(e)
-    alert("Failed to cancel appointment")
+    alert("Operation failed")
   } finally {
-    cancellingId.value = null
+    togglingId.value = null
   }
 }
 
@@ -267,7 +237,7 @@ async function cancelAppointment(appt: Appointment) {
    Lifecycle
 ----------------------------- */
 
-onMounted(fetchAppointments)
+onMounted(fetchDoctors)
 </script>
 
 <style scoped>

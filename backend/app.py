@@ -11,9 +11,18 @@ from backend.routes_doctor import doctor_bp
 from backend.routes_admin import admin_bp
 from backend.metrics import metrics_bp
 
+from flask import g
+
+
+
 
 def create_app():
     app = Flask(__name__)
+    @app.teardown_appcontext
+    def close_db(exception):
+        db = g.pop("db", None)
+        if db is not None:
+            db.close()
     CORS(app)
 
     # DB wiring ONLY (no schema creation here)
