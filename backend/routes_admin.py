@@ -1,94 +1,65 @@
 from flask import Blueprint, jsonify, request
-from datetime import datetime
-
 from backend.db import get_db
 from backend.routes import require_role
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
-# =====================================================
-# LIST APPOINTMENTS (SLOT-BASED)
-# =====================================================
+
 @admin_bp.route("/appointments", methods=["GET"])
 @require_role("admin")
 def list_appointments():
-    """
-    Admin-only, read-only appointment listing.
-    Optional filters:
-      - date (YYYY-MM-DD, derived from slot start_datetime)
-      - doctor_id
-      - status
-    """
-
     db = get_db()
 
-    filters = []
-    params = []
-
-    appt_date = request.args.get("date")
-    doctor_id = request.args.get("doctor_id")
-    status = request.args.get("status")
-
-    if appt_date:
-        filters.append("date(s.start_datetime) = ?")
-        params.append(appt_date)
-
-    if doctor_id:
-        filters.append("s.doctor_id = ?")
-        params.append(doctor_id)
-
-    if status:
-        filters.append("a.status = ?")
-        params.append(status)
-
-    where_clause = ""
-    if filters:
-        where_clause = "WHERE " + " AND ".join(filters)
-
     rows = db.execute(
-        f"""
+        """
         SELECT
-            a.id              AS appointment_id,
-            a.status          AS status,
-            s.start_datetime  AS start_datetime,
-            s.end_datetime    AS end_datetime,
+            a.id            AS appointment_id,
+            a.status        AS status,
+            s.slot_time     AS start_datetime,
 
-            pu.id             AS patient_id,
-            pu.username       AS patient_name,
+            pu.id           AS patient_id,
+            pu.username     AS patient_name,
 
-            du.id             AS doctor_id,
-            du.username       AS doctor_name
+            du.id           AS doctor_id,
+            du.username     AS doctor_name
 
         FROM appointments a
         JOIN doctor_slots s ON s.id = a.slot_id
         JOIN users pu ON pu.id = a.patient_id
         JOIN users du ON du.id = s.doctor_id
 
-        {where_clause}
-
-        ORDER BY
-            s.start_datetime ASC,
-            a.id ASC
-        """,
-        params
+        ORDER BY s.slot_time ASC, a.id ASC
+        """
     ).fetchall()
 
-    return jsonify([dict(row) for row in rows])
+    return jsonify([
+        {
+            "appointment_id": r["appointment_id"],
+            "status": r["status"],
+            "start_datetime": r["start_datetime"],
+            "patient": {
+                "id": r["patient_id"],
+                "username": r["patient_name"],
+            },
+            "doctor": {
+                "id": r["doctor_id"],
+                "username": r["doctor_name"],
+            },
+        }
+        for r in rows
+    ]), 200
 
 
-# =====================================================
-# CANCEL APPOINTMENT (ADMIN)
-# =====================================================
 @admin_bp.route("/appointments/<int:appointment_id>/cancel", methods=["PATCH"])
 @require_role("admin")
-def cancel_appointment_by_admin(appointment_id):
+def cancel_appointment(appointment_id):
     db = get_db()
 
     row = db.execute(
         """
-        SELECT a.status
-        FROM appointments a
-        WHERE a.id = ?
+        SELECT id, status
+        FROM appointments
+        WHERE id = ?
         """,
         (appointment_id,)
     ).fetchone()
@@ -96,20 +67,25 @@ def cancel_appointment_by_admin(appointment_id):
     if not row:
         return jsonify(error="Appointment not found"), 404
 
-    if row["status"] != "BOOKED":
-        return jsonify(error="Appointment cannot be cancelled"), 409
-
+    # update appointment
     db.execute(
-        """
-        UPDATE appointments
-        SET status = 'CANCELLED_BY_ADMIN'
-        WHERE id = ?
-        """,
+        "UPDATE appointments SET status = 'cancelled' WHERE id = ?",
         (appointment_id,)
     )
+
+    # audit log
+    db.execute(
+        """
+        INSERT INTO appointment_audit_logs
+        (appointment_id, actor_role, actor_id, action)
+        VALUES (?, 'admin', ?, 'CANCELLED_BY_ADMIN')
+        """,
+        (appointment_id, request.user_id)
+    )
+
     db.commit()
 
     return jsonify(
-        message="Appointment cancelled by admin",
+        message="Appointment cancelled",
         status="CANCELLED_BY_ADMIN"
-    )
+    ), 200

@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router"
 import BaseLayout from "../layouts/BaseLayout.vue"
 import Login from "../pages/Login.vue"
+import { auth } from "../services/auth"
 
 /* -----------------------
    ROUTES
@@ -34,17 +35,20 @@ const router = createRouter({
 })
 
 /* -----------------------
-   ROUTE GUARD (ADMIN ONLY)
+   ROUTE GUARD (ADMIN)
 ------------------------ */
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   if (!to.meta.requiresAdmin) {
     return true
   }
 
-  const token = localStorage.getItem("hms_token")
-  const role = localStorage.getItem("hms_role")
+  if (!auth.isAuthenticated()) {
+    return "/login"
+  }
 
-  if (!token || role !== "admin") {
+  const role = await auth.resolveRole()
+
+  if (role !== "admin") {
     return "/login"
   }
 

@@ -18,6 +18,7 @@
           autocomplete="username"
           hide-details
           class="input-field"
+          data-testid="login-username"
         />
 
         <!-- Password -->
@@ -30,6 +31,7 @@
           :type="showPassword ? 'text' : 'password'"
           hide-details
           class="input-field"
+          data-testid="login-password"
         >
           <template #append-inner>
             <v-icon
@@ -48,6 +50,7 @@
           block
           :loading="loading"
           @click="handleLogin"
+          data-testid="login-submit"
         >
           Continue
         </v-btn>
@@ -63,6 +66,7 @@
 <script setup lang="ts">
 import { ref } from "vue"
 import { useRouter } from "vue-router"
+import { auth } from "../services/auth"
 
 const username = ref("")
 const password = ref("")
@@ -85,24 +89,10 @@ async function handleLogin() {
   showError.value = false
 
   try {
-    const response = await fetch("http://127.0.0.1:5000/admin/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: username.value,
-        password: password.value,
-      }),
-    })
-
-    const data = await response.json()
-    if (!response.ok) throw new Error(data.error || "Login failed")
-
-    localStorage.setItem("hms_token", data.token)
-    localStorage.setItem("hms_role", "admin")
-
+    await auth.adminLogin(username.value, password.value)
     await router.push("/admin")
   } catch (err: any) {
-    errorMessage.value = err.message || "Unexpected error"
+    errorMessage.value = err?.message || "Invalid credentials"
     showError.value = true
   } finally {
     loading.value = false
@@ -171,7 +161,7 @@ async function handleLogin() {
 
 .form {
   display: grid;
-  gap: 22px; /* ← professional spacing */
+  gap: 22px;
 }
 
 /* ---------- Inputs ---------- */
@@ -231,6 +221,7 @@ async function handleLogin() {
   transform: translateY(-2px);
   box-shadow:
     0 18px 36px rgba(90, 110, 255, 0.45);
-  filter: brightness(1.08); /* ← readable, not black */
+  filter: brightness(1.08);
 }
 </style>
+
