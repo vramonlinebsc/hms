@@ -1,22 +1,22 @@
-describe("Admin auth", () => {
-  it("logs in as admin and validates session", () => {
-    cy.visit("http://localhost:5173/login")
+describe("Admin Authentication", () => {
+  it("allows admin to log in and routes to /admin", () => {
+    cy.intercept(
+      "POST",
+      "http://localhost:5000/admin/login"
+    ).as("adminLogin")
 
-    // Vuetify text fields render input inside wrappers
-    cy.contains("Username")
-      .parent()
-      .find("input")
-      .type("admin")
+    cy.visit("/")
 
-    cy.contains("Password")
-      .parent()
-      .find("input")
-      .type("admin123")
+    cy.get('[data-testid="login-username"]').type("admin")
+    cy.get('[data-testid="login-password"]').type("admin123")
+    cy.get('[data-testid="login-submit"]').click()
 
-    cy.contains("button", "Login").click()
+    cy.wait("@adminLogin")
+      .its("response.statusCode")
+      .should("eq", 200)
 
-    // Allow routing + async auth
-    cy.location("pathname", { timeout: 10000 }).should("include", "admin")
+    cy.location("pathname", { timeout: 10000 })
+      .should("eq", "/admin")
   })
 })
 

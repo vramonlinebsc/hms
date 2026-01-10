@@ -90,6 +90,7 @@ async function handleLogin() {
 
   try {
     await auth.adminLogin(username.value, password.value)
+    console.log("ADMIN LOGIN SUCCESS")
     await router.push("/admin")
   } catch (err: any) {
     errorMessage.value = err?.message || "Invalid credentials"

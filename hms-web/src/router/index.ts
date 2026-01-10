@@ -8,18 +8,19 @@ import { auth } from "../services/auth"
 ------------------------ */
 const routes = [
   {
+    path: "/login",
+    component: Login,
+  },
+
+  {
     path: "/",
     component: BaseLayout,
     children: [
-      { path: "", redirect: "/login" },
-      { path: "login", component: Login },
-
       {
         path: "admin",
         component: () => import("../pages/admin/AdminDashboard.vue"),
         meta: { requiresAdmin: true },
       },
-
       {
         path: "admin/appointments",
         component: () => import("../pages/admin/Appointments.vue"),
@@ -42,17 +43,13 @@ router.beforeEach(async (to) => {
     return true
   }
 
-  if (!auth.isAuthenticated()) {
+  try {
+    await auth.adminMe()
+    return true
+  } catch {
     return "/login"
   }
-
-  const role = await auth.resolveRole()
-
-  if (role !== "admin") {
-    return "/login"
-  }
-
-  return true
 })
 
 export default router
+

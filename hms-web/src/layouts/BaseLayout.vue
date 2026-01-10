@@ -1,57 +1,6 @@
-<template>
-  <v-app>
-    <!-- Header -->
-    <v-app-bar flat density="comfortable">
-      <v-app-bar-title class="brand">
-        <img
-          src="@/assets/branding/hms/header/hms-logo-header.png"
-          alt="HMS"
-          class="brand-logo"
-        />
-        <span class="brand-text">HMS</span>
-      </v-app-bar-title>
-
-      <v-spacer />
-
-      <!-- Logged out -->
-      <v-btn
-        v-if="!isAuthenticated"
-        variant="text"
-        @click="goLogin"
-      >
-        Login
-      </v-btn>
-
-      <!-- Logged in -->
-      <template v-else>
-        <v-btn
-          v-if="isAdmin"
-          variant="text"
-          @click="goAdmin"
-        >
-          Admin
-        </v-btn>
-
-        <v-btn
-          variant="text"
-          color="error"
-          @click="logout"
-        >
-          Logout
-        </v-btn>
-      </template>
-    </v-app-bar>
-
-    <!-- Page content -->
-    <v-main>
-      <router-view />
-    </v-main>
-  </v-app>
-</template>
-
 <script setup lang="ts">
 import { ref, onMounted } from "vue"
-import { useRouter } from "vue-router"
+import { useRouter, onBeforeRouteUpdate } from "vue-router"
 
 /* -----------------------
    STATE
@@ -118,22 +67,9 @@ function logout() {
 onMounted(() => {
   evaluateAuth()
 })
+
+onBeforeRouteUpdate(() => {
+  evaluateAuth()
+})
 </script>
 
-<style scoped>
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.brand-logo {
-  height: 30px;
-  width: auto;
-}
-
-.brand-text {
-  font-weight: 600;
-  letter-spacing: 0.5px;
-}
-</style>
